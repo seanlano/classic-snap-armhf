@@ -4,6 +4,26 @@ set -eu
 
 ROOT=$SNAP_COMMON/classic
 
+# $1: source
+# $2: target
+# $3: if not empty, bind mount will be read-only
+# note that we do NOT clean these up at the end, as the user might start many
+# classic shells in parallel; we could start all of them in their own mount
+# namespace, but that would make the classic shell less useful for
+# developing/debugging the snappy host
+do_bindmount() {
+    if ! mountpoint -q "$ROOT/$2"; then
+        if [ -d "$1" -a ! -L "$1" ]; then
+            mkdir -p "$ROOT/$2"
+        fi
+        mount --make-rprivate --rbind -o rbind "$1" "$ROOT/$2"
+        if [ -n "${3:-}" ]; then
+            mount --rbind -o remount,ro "$1" "$ROOT/$2"
+        fi
+    fi
+}
+
+
 if [ -d $ROOT ]; then
     echo "classic already enabled"
     exit 1
@@ -35,13 +55,19 @@ cat > $ROOT/etc/apt/apt.conf.d/00-no-pr-set-new-privs.conf <<EOF
 // by disabling the sandbox in apt.
 Debug::NoDropPrivs "1";
 EOF
+# Hostname (needed by apt update)
+echo $( hostname ) > $ROOT/etc/hostname
+# Mount /dev (needed for /dev/random)
+do_bindmount /dev /dev
+chroot $ROOT apt update
 chroot $ROOT apt install -y sudo libnss-extrausers vim.tiny
 
 
-# copy important config
-for f in hostname timezone localtime; do
-    cp -aL /etc/$f $ROOT/etc
-done
+# copy important config 
+# FIXME: Doesn't seem to work on core18??
+# for f in hostname timezone localtime; do
+#     cp -aL /etc/$f $ROOT/etc
+# done
 for f in resolv.conf nsswitch.conf hosts; do
     cp -a /etc/$f $ROOT/etc
 done
